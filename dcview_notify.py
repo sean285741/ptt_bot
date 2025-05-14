@@ -1,6 +1,12 @@
+import os
+import time
+import threading
 import requests
 from bs4 import BeautifulSoup
-import time
+from flask import Flask
+
+# Flask Web Service
+app = Flask(__name__)
 
 # Telegram Bot 設定
 TELEGRAM_TOKEN = "7618181883:AAGN1IW8zFfUQ41I0NpxC0Z5ezmqktKBHfs"
@@ -16,12 +22,15 @@ notified_items = set()
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message}
-    requests.post(url, data=payload)
+    try:
+        requests.post(url, data=payload, timeout=10)
+    except Exception as e:
+        print(f"發送 Telegram 訊息失敗：{e}")
 
-# 檢查 DCView 新上架商品
+# 爬蟲主邏輯
 def check_dcview():
     url = "http://market.dcview.com/"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0"}
 
     try:
         response = requests.get(url, headers=headers, timeout=30)
@@ -37,14 +46,12 @@ def check_dcview():
             time_tag = item.find_next("small")
             post_time = time_tag.get_text().strip() if time_tag else "（無時間）"
 
-            # 使用商品的 URL 來唯一識別商品
             if href:
                 full_link = f"http://market.dcview.com{href}" if href.startswith("/") else href
-
-                item_key = full_link  # 使用商品的 URL 作為唯一識別
+                item_key = full_link
 
                 if item_key in notified_items:
-                    continue  # 已通知過
+                    continue
 
                 if any(keyword.lower() in title.lower() for keyword in KEYWORDS):
                     message = f"🆕 新上架商品: {title}\n🕒 商品價格: {post_time}\n🔗 連結: {full_link}"
@@ -53,15 +60,25 @@ def check_dcview():
                     print(f"已通知商品：{item_key}")
 
     except Exception as e:
-        print(f"請求錯誤: {e}")
+        print(f"爬蟲錯誤: {e}")
 
-# 主程式
-def main():
-    print("開始監控 DCView 新上架商品...")
+# 背景執行的爬蟲任務
+def background_task():
     send_telegram_message("🔔 測試通知：dcview_notify 啟動成功")
     while True:
         check_dcview()
-        time.sleep(10)  # 每 10 秒檢查一次
+        time.sleep(10)
 
+# Flask 根目錄顯示狀態
+@app.route("/")
+def index():
+    return "🚀 dcview_notify 正在運行中..."
+
+# 啟動伺服器
 if __name__ == "__main__":
-    main()
+    # 啟動背景爬蟲執行緒
+    threading.Thread(target=background_task, daemon=True).start()
+
+    # 取得 Render 所提供的 PORT
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
